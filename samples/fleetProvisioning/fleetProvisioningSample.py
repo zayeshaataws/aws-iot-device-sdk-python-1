@@ -32,9 +32,10 @@ registerThingAcceptedTopicFormat = '$aws/provisioning-templates/{}/provision/jso
 registerThingRejectedTopicFormat = '$aws/provisioning-templates/{}/provision/json/rejected'
 
 class FleetProvisioningProcessor(object):
-    def __init__(self, awsIoTMQTTClient, templateName, clientToken):
+    def __init__(self, awsIoTMQTTClient, clientToken, templateName, templateParameters):
         self.clientToken = clientToken
         self.templateName = templateName
+        self.templateParameters = templateParameters
         self.awsIoTMQTTClient = awsIoTMQTTClient
         self._setupCallbacks(self.awsIoTMQTTClient)
         self.createKeysAndCertificateResponse = None
@@ -93,14 +94,8 @@ class FleetProvisioningProcessor(object):
 
     def callRegisterThing(self):
         registerThingRequest = {}
-        registerThingRequest['certificateId'] = self.createKeysAndCertificateResponse['certificateId']
-        ######
-        # Add parameters of your own 
-        # TODO send it through args.
-        registerThingRequest['deviceContext'] = {
-            'DeviceLocation': 'Seattle'
-        }
-        ######
+        registerThingRequest['certificateOwnershipToken'] = self.createKeysAndCertificateResponse['certificateOwnershipToken']
+        registerThingRequest['deviceContext'] = self.templateParameters
         registerThingRequestTopic = registerThingRequestTopicFormat.format(self.templateName)
         registerThingRequestJson = json.dumps(registerThingRequest)
         self.awsIoTMQTTClient.publish(registerThingRequestTopic, registerThingRequestJson, 1)
@@ -124,6 +119,7 @@ parser.add_argument("-r", "--rootCA", action="store", required=True, dest="rootC
 parser.add_argument("-c", "--cert", action="store", dest="certificatePath", required=True, help="Certificate file path")
 parser.add_argument("-k", "--key", action="store", dest="privateKeyPath", required=True, help="Private key file path")
 parser.add_argument("-t", "--templateName", action="store", required=True, dest="templateName", help="Template name")
+parser.add_argument("-p", "--parameters", action="store", dest="templateParameters", help="Template Parameter")
 parser.add_argument("-id", "--clientId", action="store", dest="clientId", default="Fleet Provisioning Python Sample",
                     help="Targeted client id")
 
@@ -134,6 +130,7 @@ certificatePath = args.certificatePath
 privateKeyPath = args.privateKeyPath
 clientId = args.clientId
 templateName = args.templateName
+templateParameters = json.loads(args.templateParameters)
 port = 8883
 
 # Configure logging
@@ -159,7 +156,7 @@ myAWSIoTMQTTClient.configureConnectDisconnectTimeout(10)  # 10 sec
 myAWSIoTMQTTClient.configureMQTTOperationTimeout(5)  # 5 sec
 
 myAWSIoTMQTTClient.connect()
-foundryProc = FleetProvisioningProcessor(myAWSIoTMQTTClient, templateName, clientId)
+foundryProc = FleetProvisioningProcessor(myAWSIoTMQTTClient, clientId, templateName, templateParameters)
 print('Starting provisioning...')
 foundryProc.callCreateKeysAndCertificate()
 foundryProc.callRegisterThing()
