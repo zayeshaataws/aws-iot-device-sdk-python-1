@@ -95,7 +95,7 @@ class FleetProvisioningProcessor(object):
     def callRegisterThing(self):
         registerThingRequest = {}
         registerThingRequest['certificateOwnershipToken'] = self.createKeysAndCertificateResponse['certificateOwnershipToken']
-        registerThingRequest['deviceContext'] = self.templateParameters
+        registerThingRequest['parameters'] = self.templateParameters
         registerThingRequestTopic = registerThingRequestTopicFormat.format(self.templateName)
         registerThingRequestJson = json.dumps(registerThingRequest)
         self.awsIoTMQTTClient.publish(registerThingRequestTopic, registerThingRequestJson, 1)
