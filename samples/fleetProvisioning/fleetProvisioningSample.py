@@ -120,7 +120,7 @@ parser.add_argument("-c", "--cert", action="store", dest="certificatePath", requ
 parser.add_argument("-k", "--key", action="store", dest="privateKeyPath", required=True, help="Private key file path")
 parser.add_argument("-t", "--templateName", action="store", required=True, dest="templateName", help="Template name")
 parser.add_argument("-p", "--parameters", action="store", dest="templateParameters", help="Template Parameter")
-parser.add_argument("-id", "--clientId", action="store", dest="clientId", default="Fleet Provisioning Python Sample",
+parser.add_argument("-id", "--clientId", action="store", dest="clientId", default="FleetProvisioningPythonSample",
                     help="Targeted client id")
 
 args = parser.parse_args()
