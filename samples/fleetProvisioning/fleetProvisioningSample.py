@@ -15,14 +15,13 @@
  */
  '''
 
-from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTClient
-
-import threading
-import logging
-import time
-import datetime
 import argparse
 import json
+import logging
+import time
+
+from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTClient
+
 createKeysAndCertificateRequestTopic = '$aws/certificates/create/json'
 createKeysAndCertificateAcceptedTopic = '$aws/certificates/create/json/accepted'
 createKeysAndCertificateRejectedTopic = '$aws/certificates/create/json/rejected'
@@ -30,6 +29,7 @@ createKeysAndCertificateRejectedTopic = '$aws/certificates/create/json/rejected'
 registerThingRequestTopicFormat = '$aws/provisioning-templates/{}/provision/json'
 registerThingAcceptedTopicFormat = '$aws/provisioning-templates/{}/provision/json/accepted'
 registerThingRejectedTopicFormat = '$aws/provisioning-templates/{}/provision/json/rejected'
+
 
 class FleetProvisioningProcessor(object):
     def __init__(self, awsIoTMQTTClient, clientToken, templateName, templateParameters):
@@ -43,17 +43,23 @@ class FleetProvisioningProcessor(object):
         self.failureResponse = None
         self.done = False
 
+    def connect(self):
+        self.awsIoTMQTTClient.connect()
+
+    def disconnect(self):
+        self.awsIoTMQTTClient.disconnect()
+
     def _setupCallbacks(self, awsIoTMQTTClient):
-        print('Subscribing to topic %s' % (createKeysAndCertificateAcceptedTopic))
-        myAWSIoTMQTTClient.subscribe(createKeysAndCertificateAcceptedTopic, 1, self.createKeysAndCertificateCallback)
-        print('Subscribing to topic %s' % (createKeysAndCertificateRejectedTopic))
-        myAWSIoTMQTTClient.subscribe(createKeysAndCertificateRejectedTopic, 1, self.failureCallback)
+        print('Subscribing to topic: %s' % (createKeysAndCertificateAcceptedTopic))
+        self.awsIoTMQTTClient.subscribe(createKeysAndCertificateAcceptedTopic, 1, self.createKeysAndCertificateCallback)
+        print('Subscribing to topic: %s' % (createKeysAndCertificateRejectedTopic))
+        self.awsIoTMQTTClient.subscribe(createKeysAndCertificateRejectedTopic, 1, self.failureCallback)
         registerThingAcceptedTopic = registerThingAcceptedTopicFormat.format(self.templateName)
-        print('Subscribing to topic %s' % (registerThingAcceptedTopic))
-        myAWSIoTMQTTClient.subscribe(registerThingAcceptedTopic, 1, self.registerThingCallback)
+        print('Subscribing to topic: %s' % (registerThingAcceptedTopic))
+        self.awsIoTMQTTClient.subscribe(registerThingAcceptedTopic, 1, self.registerThingCallback)
         registerThingRejectedTopic = registerThingRejectedTopicFormat.format(self.templateName)
-        print('Subscribing to topic %s' % (registerThingRejectedTopic))
-        myAWSIoTMQTTClient.subscribe(registerThingRejectedTopic, 1, self.failureCallback)
+        print('Subscribing to topic: %s' % (registerThingRejectedTopic))
+        self.awsIoTMQTTClient.subscribe(registerThingRejectedTopic, 1, self.failureCallback)
 
     def failureCallback(self, client, userdata, message):
         print("Received error from topic: " + message.topic)
@@ -64,7 +70,7 @@ class FleetProvisioningProcessor(object):
         # Wait for the response.
         loopCount = 0
         while loopCount < 10 and self.createKeysAndCertificateResponse is None:
-            if self.createKeysAndCertificateResponse is not None:
+            if self.createKeysAndCertificateResponse is not None or self.failureResponse is not None:
                 break
             print('Waiting... CreateKeysAndCertificateResponse: ' + json.dumps(self.createKeysAndCertificateResponse))
             loopCount += 1
@@ -86,7 +92,7 @@ class FleetProvisioningProcessor(object):
         # Wait for the response.
         loopCount = 0
         while loopCount < 10 and self.registerThingResponse is None:
-            if self.registerThingResponse is not None:
+            if self.registerThingResponse is not None or self.failureResponse is not None:
                 break
             loopCount += 1
             print('Waiting... RegisterThingResponse: ' + json.dumps(self.registerThingResponse))
@@ -94,6 +100,8 @@ class FleetProvisioningProcessor(object):
 
     def callRegisterThing(self):
         registerThingRequest = {}
+        if self.createKeysAndCertificateResponse is None:
+            raise Exception('CreateKeysAndCertificate API did not succeed')
         registerThingRequest['certificateOwnershipToken'] = self.createKeysAndCertificateResponse['certificateOwnershipToken']
         registerThingRequest['parameters'] = self.templateParameters
         registerThingRequestTopic = registerThingRequestTopicFormat.format(self.templateName)
@@ -107,6 +115,29 @@ class FleetProvisioningProcessor(object):
         print(message.payload)
         self.registerThingResponse = json.loads(message.payload.decode('utf-8'))
         self.done = True
+
+    def connectWithNewCertificate(self, rootCAPath):
+        if self.createKeysAndCertificateResponse is None:
+            raise Exception('CreateKeysAndCertificate API did not succeed.')
+        filePrefix = self.createKeysAndCertificateResponse['certificateId'][:10]
+        privateKeyFileName = filePrefix + '-private.pem.key'
+        certificateFileName = filePrefix + '-certificate.pem.crt'
+        self.textToFile(privateKeyFileName, self.createKeysAndCertificateResponse['privateKey'])
+        self.textToFile(certificateFileName, self.createKeysAndCertificateResponse['certificatePem'])
+        self.awsIoTMQTTClient.configureCredentials(rootCAPath, privateKeyFileName, certificateFileName)
+        print('Connecting with new certificate ' + self.createKeysAndCertificateResponse['certificateId'])
+
+        # Connecting with new credentials.
+        self.awsIoTMQTTClient.connect()
+
+        testTopic = 'topic/test'
+        testMessage = 'Test Message'
+        self.awsIoTMQTTClient.publish(testTopic, testTopic, 1)
+        print('Published successfully to topic %s: %s\n' % (testTopic, testMessage))
+
+    def textToFile(self, name, text):
+        with open(name, "w+") as file:
+            file.write(text)
 
     def isDone(self):
         return self.done
@@ -141,7 +172,6 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 streamHandler.setFormatter(formatter)
 logger.addHandler(streamHandler)
 
-
 # Init AWSIoTMQTTClient
 myAWSIoTMQTTClient = None
 myAWSIoTMQTTClient = AWSIoTMQTTClient(clientId)
@@ -155,14 +185,14 @@ myAWSIoTMQTTClient.configureDrainingFrequency(2)  # Draining: 2 Hz
 myAWSIoTMQTTClient.configureConnectDisconnectTimeout(10)  # 10 sec
 myAWSIoTMQTTClient.configureMQTTOperationTimeout(5)  # 5 sec
 
-myAWSIoTMQTTClient.connect()
 foundryProc = FleetProvisioningProcessor(myAWSIoTMQTTClient, clientId, templateName, templateParameters)
 print('Starting provisioning...')
+foundryProc.connect()
 foundryProc.callCreateKeysAndCertificate()
 foundryProc.callRegisterThing()
+foundryProc.disconnect()
 if not foundryProc.isDone():
-    print('Did not get finished')
-else:
-    print('Done')
+    raise Exception('Provisioning failed')
 
-myAWSIoTMQTTClient.disconnect()
+foundryProc.connectWithNewCertificate(rootCAPath)
+foundryProc.disconnect()
